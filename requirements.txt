@@ -1,0 +1,20 @@
+# Production requirements
+fastapi
+uvicorn[standard]
+python-multipart
+requests
+alpaca-py
+slack-sdk
+langchain
+langchain-google-vertexai
+google-cloud-aiplatform
+google-cloud-secret-manager
+google-cloud-firestore
+pandas
+numpy
+xgboost
+scikit-learn
+tensorflow
+pydantic-settings
+pytz
+python-dateutil
