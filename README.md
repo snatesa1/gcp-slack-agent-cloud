@@ -228,7 +228,7 @@ flowchart TB
 
     subgraph Output["📤 Output"]
         Ensemble["Weighted Ensemble Forecast"]
-        Probs["Probability Ranges<br/>(30%, 50%, 20%)"]
+        Probs["Probability Percentiles<br/>(p10, p30, p50, p75, p90)"]
     end
 
     DF --> LSTM
@@ -246,7 +246,69 @@ flowchart TB
 |-------|--------------|----------|---------|
 | **LSTM** | 2 LSTM layers (50 units), Dropout(0.2), Dense | 10 epochs, batch=32 | Captures sequential patterns |
 | **XGBoost** | 100 estimators, depth=5, lr=0.1 | Lag features (1-5 days) | Tree-based pattern recognition |
-| **Monte Carlo** | 1000 simulations | GBM with μ and σ from returns | Probabilistic range estimation |
+| **Monte Carlo** | 1000 simulations (configurable) | GBM with μ and σ from returns | Probabilistic percentile estimation |
+
+### Monte Carlo Output Structure
+
+The Monte Carlo simulator returns **actual percentiles** from simulation distributions:
+
+| Percentile | Interpretation | Slack Display |
+|------------|----------------|---------------|
+| **p10** | Bearish extreme — 10% chance price falls below this | 🔴 |
+| **p30** | Pessimistic scenario — 30% chance price falls below | 🟠 |
+| **p50** | Median expectation — equal chance above/below | 🟡 |
+| **p75** | Optimistic scenario — 75% chance price stays below | 🟢 |
+| **p90** | Bullish extreme — 90% chance price stays below | 🚀 |
+
+**Output JSON:**
+```json
+{
+  "forecast": [183.2, 184.5, 185.1],
+  "final_price": 185.1,
+  "percentiles": {
+    "p10": 178.50,
+    "p30": 181.20,
+    "p50": 184.00,
+    "p75": 187.30,
+    "p90": 191.80
+  },
+  "interpretation": {
+    "bearish_extreme": "10% chance price falls below $178.50",
+    "pessimistic": "30% chance price falls below $181.20",
+    "median": "50% chance price is around $184.00",
+    "optimistic": "75% chance price stays below $187.30",
+    "bullish_extreme": "90% chance price stays below $191.80"
+  },
+  "model_contributions": {
+    "lstm": 185.2,
+    "xgboost": 184.8,
+    "monte_carlo": 185.5
+  }
+}
+```
+
+### Monthly Candlestick Analysis
+
+The system generates a **6-month candlestick summary** with bullish/bearish classification:
+
+| Field | Description |
+|-------|-------------|
+| `month` | Month label (e.g., "Jan 2026") |
+| `is_bullish` | True if close > open |
+| `change_pct` | Percentage change (close - open) / open |
+| `body_ratio` | Body size as % of total range |
+
+**Slack ASCII Chart Format:**
+```
+*📊 Monthly Candlestick Chart (6M):*
+Sep 2025: 🟢  +3.2% ██████
+Oct 2025: 🔴  -1.8% ███
+Nov 2025: 🟢  +5.1% ██████████
+Dec 2025: 🟢  +2.4% ████
+Jan 2026: 🔴  -0.9% █
+Feb 2026: 🟢  +4.3% ████████
+_Trend: Bullish (4🟢 vs 2🔴)_
+```
 
 ---
 
@@ -567,5 +629,5 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 <p align="center">
   <b>Built with ❤️ for quantitative trading enthusiasts</b><br>
-  <i>GCP Stock Agent v2.3</i>
+  <i>GCP Stock Agent v2.5</i>
 </p>

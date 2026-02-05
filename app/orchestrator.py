@@ -1,4 +1,4 @@
-from .researcher import ResearchAgent
+from .researcher import ResearchAgent, TechnicalAnalyzer
 from .models import PredictionEnsemble
 from .alerter import Alerter
 from datetime import datetime
@@ -55,6 +55,17 @@ class StockOrchestrator:
         except:
             pass
         
+        # 5. Monthly Candlestick Analysis
+        monthly_candles = None
+        candles_status = "❌ No data"
+        try:
+            if df is not None and not df.empty:
+                monthly_candles = TechnicalAnalyzer.calculate_monthly_candles(df, months=6)
+                candles_status = "✅ Success"
+        except Exception as e:
+            print(f"⚠️ Monthly candles failed for {symbol}: {e}")
+            candles_status = "❌ Failed"
+        
         # Remove ohlcv from research before returning (too large for JSON)
         research_copy = {k: v for k, v in research.items() if k != 'ohlcv'}
         
@@ -66,9 +77,11 @@ class StockOrchestrator:
             "research": research_copy,
             "predictions": predictions,
             "momentum": research.get('momentum'),
+            "monthly_candles": monthly_candles,
             "trend_reversal": reversal,
             "timestamp": datetime.now().isoformat(),
-            "pred_status": pred_status
+            "pred_status": pred_status,
+            "candles_status": candles_status
         }
 
     def format_slack_message(self, result: Dict):
@@ -122,8 +135,47 @@ class StockOrchestrator:
             msg += f"• Avg Duration: {avg_streak}d | Max: {max_streak}d\n\n"
         
         if result['predictions']:
-            msg += "*Forecast Range (50% Prob):*\n"
-            msg += f"${result['predictions']['probs']['50%_range'][0]:.2f} - ${result['predictions']['probs']['50%_range'][1]:.2f}\n"
+            pcts = result['predictions'].get('percentiles', {})
+            msg += "*📊 Price Probability Distribution:*\n"
+            msg += f"• 🔴 10% (Bearish): ${pcts.get('p10', 0):.2f}\n"
+            msg += f"• 🟠 30% (Pessimistic): ${pcts.get('p30', 0):.2f}\n"
+            msg += f"• 🟡 50% (Median): ${pcts.get('p50', 0):.2f}\n"
+            msg += f"• 🟢 75% (Optimistic): ${pcts.get('p75', 0):.2f}\n"
+            msg += f"• 🚀 90% (Bullish): ${pcts.get('p90', 0):.2f}\n"
+        
+        # Monthly Candlestick Chart
+        candles_data = result.get('monthly_candles')
+        if candles_data and candles_data.get('candles'):
+            msg += "\n*📊 Monthly Candlestick Chart (6M):*\n"
+            msg += "```\n"
+            
+            for candle in candles_data['candles']:
+                month = candle['month']
+                change = candle['change_pct']
+                is_bull = candle['is_bullish']
+                
+                # Create ASCII bar
+                bar_len = min(int(abs(change) * 2), 10)  # Cap at 10 chars
+                if is_bull:
+                    bar = '█' * bar_len
+                    emoji = '🟢'
+                    sign = '+'
+                else:
+                    bar = '░' * bar_len
+                    emoji = '🔴'
+                    sign = ''
+                
+                msg += f"{month}: {emoji} {sign}{change:>5.1f}% {bar}\n"
+            
+            msg += "```\n"
+            
+            # Summary line
+            summary = candles_data.get('summary', {})
+            bull = summary.get('bullish_months', 0)
+            bear = summary.get('bearish_months', 0)
+            trend = summary.get('trend', 'Neutral')
+            trend_emoji = {'🟢': 'Bullish', '🔴': 'Bearish', '🟡': 'Neutral'}.get(trend, '🟡')
+            msg += f"_Trend: {trend} ({bull}🟢 vs {bear}🔴)_\n"
         
         if result['trend_reversal']:
             msg += "\n🚨 *Alert: Technical Trend Reversal Detected!*"
@@ -131,8 +183,9 @@ class StockOrchestrator:
         msg += "\n*System Status:*\n"
         msg += f"• Techs: {status.get('technicals', '❓')}\n"
         msg += f"• Momentum: {status.get('momentum', '❓')}\n"
+        msg += f"• Candles: {result.get('candles_status', '❓')}\n"
         msg += f"• Preds: {result.get('pred_status', '❓')}\n"
             
-        msg += "\n_Automated GCP Stock Agent v2.3_"
+        msg += "\n_Automated GCP Stock Agent v2.5_"
         return msg
 

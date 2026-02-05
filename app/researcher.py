@@ -130,6 +130,90 @@ class TechnicalAnalyzer:
             "max_streak": max_streak,
             "percentile": percentile
         }
+    
+    @staticmethod
+    def calculate_monthly_candles(df: pd.DataFrame, months: int = 6) -> Dict:
+        """
+        Resamples daily OHLCV data to monthly candlesticks.
+        Returns last N months with bullish/bearish classification.
+        
+        Args:
+            df: DataFrame with OHLCV columns
+            months: Number of months to return (default: 6)
+            
+        Returns:
+            Dict with monthly candles and summary statistics
+        """
+        if df is None or df.empty:
+            return {"error": "No data available", "candles": []}
+        
+        try:
+            # Ensure index is datetime
+            df_copy = df.copy()
+            if not isinstance(df_copy.index, pd.DatetimeIndex):
+                df_copy.index = pd.to_datetime(df_copy.index)
+            
+            # Resample to monthly OHLC
+            monthly = df_copy.resample('ME').agg({
+                'open': 'first',
+                'high': 'max',
+                'low': 'min',
+                'close': 'last',
+                'volume': 'sum' if 'volume' in df_copy.columns else 'first'
+            }).dropna()
+            
+            # Get last N months
+            monthly = monthly.tail(months)
+            
+            candles = []
+            for idx, row in monthly.iterrows():
+                open_price = row['open']
+                close_price = row['close']
+                high_price = row['high']
+                low_price = row['low']
+                
+                # Calculate body and wick sizes
+                body_pct = ((close_price - open_price) / open_price) * 100
+                range_pct = ((high_price - low_price) / low_price) * 100
+                
+                # Bullish = close > open, Bearish = close < open
+                is_bullish = close_price >= open_price
+                
+                # Strength based on body size relative to range
+                body_size = abs(close_price - open_price)
+                total_range = high_price - low_price
+                body_ratio = (body_size / total_range * 100) if total_range > 0 else 0
+                
+                candles.append({
+                    "month": idx.strftime("%b %Y"),
+                    "open": round(open_price, 2),
+                    "high": round(high_price, 2),
+                    "low": round(low_price, 2),
+                    "close": round(close_price, 2),
+                    "is_bullish": is_bullish,
+                    "change_pct": round(body_pct, 2),
+                    "body_ratio": round(body_ratio, 1),
+                    "range_pct": round(range_pct, 2)
+                })
+            
+            # Summary stats
+            bullish_count = sum(1 for c in candles if c['is_bullish'])
+            bearish_count = len(candles) - bullish_count
+            avg_gain = np.mean([c['change_pct'] for c in candles if c['is_bullish']]) if bullish_count > 0 else 0
+            avg_loss = np.mean([c['change_pct'] for c in candles if not c['is_bullish']]) if bearish_count > 0 else 0
+            
+            return {
+                "candles": candles,
+                "summary": {
+                    "bullish_months": bullish_count,
+                    "bearish_months": bearish_count,
+                    "avg_bullish_gain": round(avg_gain, 2),
+                    "avg_bearish_loss": round(avg_loss, 2),
+                    "trend": "Bullish" if bullish_count > bearish_count else "Bearish" if bearish_count > bullish_count else "Neutral"
+                }
+            }
+        except Exception as e:
+            return {"error": str(e), "candles": []}
 
 
 class ResearchAgent:

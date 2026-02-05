@@ -75,8 +75,28 @@ class XGBoostModel:
         return np.array(predictions)
 
 class MonteCarloSimulator:
+    """
+    Monte Carlo simulation using Geometric Brownian Motion (GBM).
+    Returns full simulation paths for percentile calculations.
+    """
+    
     @staticmethod
-    def simulate(df: pd.DataFrame, forecast_days: int, num_simulations: int = 1000) -> np.ndarray:
+    def simulate(
+        df: pd.DataFrame, 
+        forecast_days: int, 
+        num_simulations: int = 1000
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Run Monte Carlo simulations and return both mean path and all paths.
+        
+        Args:
+            df: DataFrame with 'close' column
+            forecast_days: Number of days to forecast
+            num_simulations: Number of simulation paths (default: 1000)
+            
+        Returns:
+            Tuple of (mean_path, all_simulated_paths)
+        """
         returns = df['close'].pct_change().dropna()
         mu = returns.mean()
         sigma = returns.std()
@@ -87,30 +107,77 @@ class MonteCarloSimulator:
         for i in range(num_simulations):
             prices = [last_price]
             for _ in range(forecast_days):
+                # GBM: S(t+1) = S(t) * exp((mu - 0.5*sigma^2)*dt + sigma*sqrt(dt)*Z)
+                # Simplified for daily: S(t+1) = S(t) * (1 + N(mu, sigma))
                 prices.append(prices[-1] * (1 + np.random.normal(mu, sigma)))
             simulated_paths[i, :] = prices[1:]
             
-        return np.mean(simulated_paths, axis=0)
+        return np.mean(simulated_paths, axis=0), simulated_paths
+    
+    @staticmethod
+    def get_percentiles(
+        simulated_paths: np.ndarray, 
+        percentiles: List[int] = [10, 30, 50, 75, 90]
+    ) -> dict:
+        """
+        Calculate price percentiles from simulation paths.
+        
+        Args:
+            simulated_paths: Array of shape (num_simulations, forecast_days)
+            percentiles: List of percentiles to calculate
+            
+        Returns:
+            Dict mapping percentile to final day price
+        """
+        final_prices = simulated_paths[:, -1]  # Get last day prices from all simulations
+        return {
+            f"p{p}": float(np.percentile(final_prices, p))
+            for p in percentiles
+        }
+
 
 class PredictionEnsemble:
-    def __init__(self):
+    """
+    Ensemble model combining LSTM, XGBoost, and Monte Carlo predictions.
+    """
+    
+    def __init__(self, num_simulations: int = 1000):
         self.lstm = LSTMModel()
         self.xgb = XGBoostModel()
         self.mc = MonteCarloSimulator()
+        self.num_simulations = num_simulations
 
-    def get_ensemble_forecast(self, df: pd.DataFrame, forecast_days: int):
+    def get_ensemble_forecast(self, df: pd.DataFrame, forecast_days: int) -> dict:
+        """
+        Generate ensemble forecast with probability distributions.
+        
+        Returns:
+            Dict with forecast, percentiles, and model contributions
+        """
         lstm_pred = self.lstm.train_and_predict(df, forecast_days)
         xgb_pred = self.xgb.train_and_predict(df, forecast_days)
-        mc_pred = self.mc.simulate(df, forecast_days)
+        mc_mean, mc_paths = self.mc.simulate(df, forecast_days, self.num_simulations)
         
-        ensemble_pred = (lstm_pred * 0.4) + (xgb_pred * 0.4) + (mc_pred * 0.2)
-        std_dev = df['close'].pct_change().std() * df['close'].iloc[-1]
+        # Weighted ensemble: LSTM 40%, XGBoost 40%, Monte Carlo 20%
+        ensemble_pred = (lstm_pred * 0.4) + (xgb_pred * 0.4) + (mc_mean * 0.2)
+        
+        # Get actual percentiles from Monte Carlo simulations
+        percentiles = self.mc.get_percentiles(mc_paths, [10, 30, 50, 75, 90])
         
         return {
             "forecast": ensemble_pred.tolist(),
-            "probs": {
-                "30%_range": [ensemble_pred[-1] - 0.5 * std_dev, ensemble_pred[-1] + 0.5 * std_dev],
-                "50%_range": [ensemble_pred[-1] - 1.0 * std_dev, ensemble_pred[-1] + 1.0 * std_dev],
-                "20%_range": [ensemble_pred[-1] - 1.5 * std_dev, ensemble_pred[-1] + 1.5 * std_dev]
+            "final_price": float(ensemble_pred[-1]),
+            "percentiles": percentiles,
+            "interpretation": {
+                "bearish_extreme": f"10% chance price falls below ${percentiles['p10']:.2f}",
+                "pessimistic": f"30% chance price falls below ${percentiles['p30']:.2f}",
+                "median": f"50% chance price is around ${percentiles['p50']:.2f}",
+                "optimistic": f"75% chance price stays below ${percentiles['p75']:.2f}",
+                "bullish_extreme": f"90% chance price stays below ${percentiles['p90']:.2f}"
+            },
+            "model_contributions": {
+                "lstm": lstm_pred[-1],
+                "xgboost": xgb_pred[-1],
+                "monte_carlo": mc_mean[-1]
             }
         }
