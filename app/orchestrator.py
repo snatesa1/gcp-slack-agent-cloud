@@ -3,6 +3,7 @@ from .models import PredictionEnsemble
 from .alerter import Alerter
 from datetime import datetime
 from typing import Dict
+import os
 
 class StockOrchestrator:
     def __init__(self):
@@ -55,12 +56,18 @@ class StockOrchestrator:
         except:
             pass
         
-        # 5. Monthly Candlestick Analysis
+        # 5. Enhanced Weighted Candlestick Analysis
         monthly_candles = None
         candles_status = "❌ No data"
         try:
             if df is not None and not df.empty:
-                monthly_candles = TechnicalAnalyzer.calculate_monthly_candles(df, months=6)
+                fred_key = os.getenv('FRED_API_KEY')
+                monthly_candles = TechnicalAnalyzer.calculate_weighted_candles(
+                    df, 
+                    lookback=12, 
+                    recency_decay=0.95,
+                    fred_api_key=fred_key
+                )
                 candles_status = "✅ Success"
         except Exception as e:
             print(f"⚠️ Monthly candles failed for {symbol}: {e}")
@@ -143,19 +150,47 @@ class StockOrchestrator:
             msg += f"• 🟢 75% (Optimistic): ${pcts.get('p75', 0):.2f}\n"
             msg += f"• 🚀 90% (Bullish): ${pcts.get('p90', 0):.2f}\n"
         
-        # Monthly Candlestick Chart
+        # Enhanced Monthly Candlestick Analysis
         candles_data = result.get('monthly_candles')
         if candles_data and candles_data.get('candles'):
-            msg += "\n*📊 Monthly Candlestick Chart (6M):*\n"
-            msg += "```\n"
+            summary = candles_data.get('summary', {})
             
-            for candle in candles_data['candles']:
+            msg += "\n*📊 Enhanced 12-Month Trend Analysis:*\n"
+            
+            # Weighted metrics first
+            weighted_score = summary.get('weighted_trend_score', 0)
+            weighted_trend = summary.get('weighted_trend', 'Neutral')
+            recent_momentum = summary.get('recent_momentum', 0)
+            recent_trend = summary.get('recent_trend', 'Neutral')
+            
+            trend_emoji = {'Bullish': '🟢', 'Bearish': '🔴', 'Neutral': '🟡'}.get(weighted_trend, '🟡')
+            msg += f"• Overall Trend: {trend_emoji} *{weighted_trend}* (Score: {weighted_score:+.1f})\n"
+            
+            recent_emoji = {'Bullish': '🟢', 'Bearish': '🔴', 'Neutral': '🟡'}.get(recent_trend, '🟡')
+            msg += f"• Recent Momentum: {recent_emoji} *{recent_trend}* (Score: {recent_momentum:+.1f})\n"
+            
+            # Volatility regime
+            vol_regime = summary.get('volatility_regime', 'Normal')
+            vol_emoji = {'High Volatility': '🔥', 'Low Volatility': '😴', 'Normal': '📊'}.get(vol_regime, '📊')
+            msg += f"• Volatility: {vol_emoji} {vol_regime} ({summary.get('current_volatility', 0):.1f}%)\n"
+            msg += f"• Conviction: {summary.get('avg_conviction', 0):.0f}%\n"
+            
+            # Event markers
+            if summary.get('has_events'):
+                msg += f"• Economic Events: {summary.get('event_months', 0)} months tracked 📅\n"
+            
+            msg += "\n*Monthly Chart:*\n```\n"
+            
+            # Show last 6 months for mobile readability
+            candles = candles_data['candles'][-6:]
+            for candle in candles:
                 month = candle['month']
                 change = candle['change_pct']
                 is_bull = candle['is_bullish']
+                events = candle.get('events', [])
                 
                 # Create ASCII bar
-                bar_len = min(int(abs(change) * 2), 10)  # Cap at 10 chars
+                bar_len = min(int(abs(change) * 2), 10)
                 if is_bull:
                     bar = '█' * bar_len
                     emoji = '🟢'
@@ -165,17 +200,16 @@ class StockOrchestrator:
                     emoji = '🔴'
                     sign = ''
                 
-                msg += f"{month}: {emoji} {sign}{change:>5.1f}% {bar}\n"
+                event_marker = ' 📅' if events else ''
+                msg += f"{month}: {emoji} {sign}{change:>5.1f}% {bar}{event_marker}\n"
             
             msg += "```\n"
             
-            # Summary line
-            summary = candles_data.get('summary', {})
+            # Comparison: simple vs weighted
+            simple_trend = summary.get('simple_trend', 'Neutral')
             bull = summary.get('bullish_months', 0)
             bear = summary.get('bearish_months', 0)
-            trend = summary.get('trend', 'Neutral')
-            trend_emoji = {'🟢': 'Bullish', '🔴': 'Bearish', '🟡': 'Neutral'}.get(trend, '🟡')
-            msg += f"_Trend: {trend} ({bull}🟢 vs {bear}🔴)_\n"
+            msg += f"_Simple count: {simple_trend} ({bull}🟢 vs {bear}🔴)_\n"
         
         if result['trend_reversal']:
             msg += "\n🚨 *Alert: Technical Trend Reversal Detected!*"

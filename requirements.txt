@@ -18,3 +18,4 @@ tensorflow
 pydantic-settings
 pytz
 python-dateutil
+fredapi

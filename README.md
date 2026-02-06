@@ -287,28 +287,82 @@ The Monte Carlo simulator returns **actual percentiles** from simulation distrib
 }
 ```
 
-### Monthly Candlestick Analysis
+### Enhanced Weighted Candle Analysis 🆕
 
-The system generates a **6-month candlestick summary** with bullish/bearish classification:
+The system now features **sophisticated weighted candle analysis** that addresses three critical limitations of simple counting:
 
-| Field | Description |
-|-------|-------------|
-| `month` | Month label (e.g., "Jan 2026") |
-| `is_bullish` | True if close > open |
-| `change_pct` | Percentage change (close - open) / open |
-| `body_ratio` | Body size as % of total range |
+#### The Problem with Simple Counting
 
-**Slack ASCII Chart Format:**
+❌ **Old Method Issues:**
+1. **Magnitude blindness**: 4 months of +1% counted same as 2 months of -15% (net bearish ignored!)
+2. **Recency blindness**: Equal weight to all periods misses trend reversals
+3. **Context blindness**: No awareness of economic events driving volatility
+
+#### The Solution: Weighted Scoring
+
+✅ **New Algorithm:**
+```python
+weighted_contribution = direction × magnitude × conviction × recency_weight
+
+where:
+- direction = +1 (bullish) or -1 (bearish)
+- magnitude = abs(change_pct)
+- conviction = body_ratio / 100  # Decisive move vs indecision
+- recency_weight = 0.95^(lookback - i - 1)  # Latest = 1.0, oldest ≈ 0.57
 ```
-*📊 Monthly Candlestick Chart (6M):*
-Sep 2025: 🟢  +3.2% ██████
-Oct 2025: 🔴  -1.8% ███
-Nov 2025: 🟢  +5.1% ██████████
-Dec 2025: 🟢  +2.4% ████
-Jan 2026: 🔴  -0.9% █
-Feb 2026: 🟢  +4.3% ████████
-_Trend: Bullish (4🟢 vs 2🔴)_
+
+#### Enhanced Metrics
+
+| Metric | Description | Example |
+|--------|-------------|----------|
+| **Weighted Trend Score** | Sum of all weighted contributions | +35.2 = Bullish |
+| **Recent Momentum** | Last 25% of periods (no decay) | -8.3 = Reversal detected! |
+| **Volatility Regime** | Current volatility vs historical | "High Volatility" (80th %ile) |
+| **Conviction Score** | Average body ratio across periods | 72% = Decisive moves |
+| **Economic Events** 🆕 | CPI, unemployment, FOMC tracked via FRED API | 8 months with events |
+
+#### FRED API Integration
+
+Automatic tracking of market-moving economic events:
+- 📅 **CPI (Consumer Price Index)** - Monthly inflation data
+- 📅 **Unemployment Rate** - Jobs report (first Friday)
+- 📅 **FOMC Rate Changes** - Federal Reserve decisions
+
+Months with events are marked with 📅 in the chart.
+
+#### Enhanced Slack Output
+
 ```
+*📊 Enhanced 12-Month Trend Analysis:*
+• Overall Trend: 🟢 *Bullish* (Score: +35.2)
+• Recent Momentum: 🔴 *Bearish* (Score: -8.3)  ⚠️ Reversal!
+• Volatility: 🔥 High Volatility (4.1%)
+• Conviction: 72%
+• Economic Events: 8 months tracked 📅
+
+*Monthly Chart:*
+```
+Jan 2024: 🟢  +5.2% ████████ 📅
+Feb 2024: 🟢  +3.1% ██████
+Mar 2024: 🔴  -2.1% ████ 📅
+Apr 2024: 🟢  +1.8% ███
+May 2024: 🔴 -12.3% ████████████ 📅
+Jun 2024: 🔴  -8.7% █████████
+```
+_Simple count: Neutral (3🟢 vs 3🔴)_
+_Weighted trend: Bearish (magnitude matters!)_
+```
+
+#### Example: Magnitude Weighting in Action
+
+**Scenario:** 4 months of +1% vs 2 months of -15%
+
+| Method | Result | Explanation |
+|--------|--------|-------------|
+| **Simple Count** | "Bullish" (4 > 2) | ❌ Misleading! |
+| **Weighted Score** | -20.4 (Bearish) | ✅ Correctly identifies net bearish trend |
+
+The weighted method properly accounts for the fact that two -15% months **outweigh** four +1% months in actual P&L impact.
 
 ---
 
@@ -388,6 +442,7 @@ Each component has **graceful degradation**:
 | `alpaca-py` | Latest | Market data API |
 | `slack-sdk` | Latest | Slack API integration |
 | `requests` | Latest | HTTP client |
+| `fredapi` | Latest | 🆕 Federal Reserve Economic Data API |
 
 ### GCP Integration
 | Library | Version | Purpose |
@@ -420,6 +475,7 @@ ALPACA_API_KEY=your_key
 ALPACA_SECRET_KEY=your_secret
 SLACK_BOT_TOKEN=xoxb-...
 SLACK_SIGNING_SECRET=...
+FRED_API_KEY=your_fred_api_key  # Get free key at https://fred.stlouisfed.org/docs/api/api_key.html
 EOF
 
 # 3. Run locally
@@ -629,5 +685,5 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 <p align="center">
   <b>Built with ❤️ for quantitative trading enthusiasts</b><br>
-  <i>GCP Stock Agent v2.5</i>
+  <i>GCP Stock Agent v3.0</i> - Now with Enhanced Weighted Candle Analysis
 </p>

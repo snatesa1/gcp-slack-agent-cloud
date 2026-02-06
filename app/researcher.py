@@ -134,6 +134,7 @@ class TechnicalAnalyzer:
     @staticmethod
     def calculate_monthly_candles(df: pd.DataFrame, months: int = 6) -> Dict:
         """
+        LEGACY METHOD - Use calculate_weighted_candles for enhanced analysis.
         Resamples daily OHLCV data to monthly candlesticks.
         Returns last N months with bullish/bearish classification.
         
@@ -214,6 +215,250 @@ class TechnicalAnalyzer:
             }
         except Exception as e:
             return {"error": str(e), "candles": []}
+    
+    @staticmethod
+    def calculate_weighted_candles(
+        df: pd.DataFrame, 
+        lookback: int = 12,
+        recency_decay: float = 0.95,
+        fred_api_key: str = None
+    ) -> Dict:
+        """
+        Enhanced candle analysis with magnitude weighting, recency bias, and event markers.
+        
+        Args:
+            df: DataFrame with OHLCV columns
+            lookback: Number of months to analyze (default: 12)
+            recency_decay: Decay factor for recency weighting (default: 0.95)
+            fred_api_key: FRED API key for economic events (optional)
+            
+        Returns:
+            Dict with weighted analysis including:
+            - Individual candle data with events
+            - Weighted trend score (magnitude * conviction * recency)
+            - Recent momentum score
+            - Volatility regime classification
+        """
+        if df is None or df.empty:
+            return {"error": "No data available", "candles": []}
+        
+        try:
+            # Ensure index is datetime
+            df_copy = df.copy()
+            if not isinstance(df_copy.index, pd.DatetimeIndex):
+                df_copy.index = pd.to_datetime(df_copy.index)
+            
+            # Resample to monthly OHLC
+            monthly = df_copy.resample('ME').agg({
+                'open': 'first',
+                'high': 'max',
+                'low': 'min',
+                'close': 'last',
+                'volume': 'sum' if 'volume' in df_copy.columns else 'first'
+            }).dropna()
+            
+            # Get last N months
+            monthly = monthly.tail(lookback)
+            
+            if monthly.empty:
+                return {"error": "Insufficient data", "candles": []}
+            
+            # Fetch economic events if FRED API key provided
+            events = {}
+            if fred_api_key:
+                events = TechnicalAnalyzer._fetch_economic_events(
+                    fred_api_key,
+                    monthly.index[0],
+                    monthly.index[-1]
+                )
+            
+            candles = []
+            volatilities = []
+            weighted_score = 0.0
+            recent_score = 0.0
+            recent_start = lookback - (lookback // 4)  # Last 25% of periods
+            
+            for i, (idx, row) in enumerate(monthly.iterrows()):
+                open_price = row['open']
+                close_price = row['close']
+                high_price = row['high']
+                low_price = row['low']
+                
+                # Price metrics
+                body_pct = ((close_price - open_price) / open_price) * 100
+                range_pct = ((high_price - low_price) / low_price) * 100
+                is_bullish = close_price >= open_price
+                
+                # Conviction: body size relative to total range
+                body_size = abs(close_price - open_price)
+                total_range = high_price - low_price
+                body_ratio = (body_size / total_range * 100) if total_range > 0 else 0
+                conviction = body_ratio / 100.0  # Normalize to 0-1
+                
+                # Recency weight: most recent = 1.0, oldest decays exponentially
+                recency_weight = recency_decay ** (lookback - i - 1)
+                
+                # Direction: +1 bullish, -1 bearish
+                direction = 1 if is_bullish else -1
+                
+                # Magnitude: absolute change percentage
+                magnitude = abs(body_pct)
+                
+                # Weighted contribution to trend score
+                contribution = direction * magnitude * conviction * recency_weight
+                weighted_score += contribution
+                
+                # Recent momentum (last 25% of periods, no decay)
+                if i >= recent_start:
+                    recent_score += direction * magnitude * conviction
+                
+                # Volatility tracking
+                volatilities.append(range_pct)
+                
+                # Check for economic events
+                month_key = idx.strftime('%Y-%m')
+                event_list = events.get(month_key, [])
+                
+                candles.append({
+                    "month": idx.strftime("%b %Y"),
+                    "open": round(open_price, 2),
+                    "high": round(high_price, 2),
+                    "low": round(low_price, 2),
+                    "close": round(close_price, 2),
+                    "is_bullish": is_bullish,
+                    "change_pct": round(body_pct, 2),
+                    "body_ratio": round(body_ratio, 1),
+                    "range_pct": round(range_pct, 2),
+                    "conviction": round(conviction, 2),
+                    "recency_weight": round(recency_weight, 2),
+                    "weighted_contribution": round(contribution, 2),
+                    "events": event_list
+                })
+            
+            # Summary statistics
+            bullish_count = sum(1 for c in candles if c['is_bullish'])
+            bearish_count = len(candles) - bullish_count
+            avg_gain = np.mean([c['change_pct'] for c in candles if c['is_bullish']]) if bullish_count > 0 else 0
+            avg_loss = np.mean([c['change_pct'] for c in candles if not c['is_bullish']]) if bearish_count > 0 else 0
+            avg_volatility = np.mean(volatilities)
+            
+            # Volatility regime classification
+            vol_80th = np.percentile(volatilities, 80)
+            vol_20th = np.percentile(volatilities, 20)
+            latest_vol = volatilities[-1]
+            
+            if latest_vol > vol_80th:
+                vol_regime = "High Volatility"
+            elif latest_vol < vol_20th:
+                vol_regime = "Low Volatility"
+            else:
+                vol_regime = "Normal"
+            
+            # Conviction score: average body ratio
+            avg_conviction = np.mean([c['conviction'] for c in candles])
+            
+            return {
+                "candles": candles,
+                "summary": {
+                    # Raw counts (legacy compatibility)
+                    "bullish_months": bullish_count,
+                    "bearish_months": bearish_count,
+                    "avg_bullish_gain": round(avg_gain, 2),
+                    "avg_bearish_loss": round(avg_loss, 2),
+                    "simple_trend": "Bullish" if bullish_count > bearish_count else "Bearish" if bearish_count > bullish_count else "Neutral",
+                    
+                    # Enhanced weighted metrics
+                    "weighted_trend_score": round(weighted_score, 2),
+                    "weighted_trend": "Bullish" if weighted_score > 0 else "Bearish" if weighted_score < 0 else "Neutral",
+                    "recent_momentum": round(recent_score, 2),
+                    "recent_trend": "Bullish" if recent_score > 0 else "Bearish" if recent_score < 0 else "Neutral",
+                    
+                    # Volatility metrics
+                    "volatility_regime": vol_regime,
+                    "avg_volatility": round(avg_volatility, 2),
+                    "current_volatility": round(latest_vol, 2),
+                    
+                    # Conviction
+                    "avg_conviction": round(avg_conviction * 100, 1),  # Convert back to percentage
+                    
+                    # Event awareness
+                    "has_events": len(events) > 0,
+                    "event_months": len(events)
+                }
+            }
+        except Exception as e:
+            return {"error": str(e), "candles": []}
+    
+    @staticmethod
+    def _fetch_economic_events(api_key: str, start_date, end_date) -> Dict:
+        """
+        Fetches economic event data from FRED API.
+        Returns dict mapping 'YYYY-MM' to list of event descriptions.
+        """
+        try:
+            from fredapi import Fred
+            from datetime import datetime
+            
+            fred = Fred(api_key=api_key)
+            events = {}
+            
+            # CPI (Consumer Price Index) - released monthly around 13th
+            try:
+                cpi = fred.get_series('CPIAUCSL', start_date, end_date)
+                for date, value in cpi.items():
+                    month_key = date.strftime('%Y-%m')
+                    if month_key not in events:
+                        events[month_key] = []
+                    events[month_key].append({
+                        "type": "CPI",
+                        "value": round(value, 2),
+                        "impact": "high"
+                    })
+            except Exception as e:
+                print(f"⚠️ Failed to fetch CPI data: {e}")
+            
+            # Unemployment Rate - released first Friday of each month
+            try:
+                unemployment = fred.get_series('UNRATE', start_date, end_date)
+                for date, value in unemployment.items():
+                    month_key = date.strftime('%Y-%m')
+                    if month_key not in events:
+                        events[month_key] = []
+                    events[month_key].append({
+                        "type": "Unemployment",
+                        "value": round(value, 2),
+                        "impact": "high"
+                    })
+            except Exception as e:
+                print(f"⚠️ Failed to fetch unemployment data: {e}")
+            
+            # Federal Funds Rate (FOMC decisions)
+            try:
+                fed_funds = fred.get_series('FEDFUNDS', start_date, end_date)
+                prev_rate = None
+                for date, value in fed_funds.items():
+                    if prev_rate is not None and value != prev_rate:
+                        month_key = date.strftime('%Y-%m')
+                        if month_key not in events:
+                            events[month_key] = []
+                        events[month_key].append({
+                            "type": "FOMC Rate Change",
+                            "value": round(value, 2),
+                            "change": round(value - prev_rate, 2),
+                            "impact": "critical"
+                        })
+                    prev_rate = value
+            except Exception as e:
+                print(f"⚠️ Failed to fetch Fed Funds data: {e}")
+            
+            return events
+        except ImportError:
+            print("⚠️ fredapi not installed. Install with: pip install fredapi")
+            return {}
+        except Exception as e:
+            print(f"⚠️ Error fetching economic events: {e}")
+            return {}
+
 
 
 class ResearchAgent:
