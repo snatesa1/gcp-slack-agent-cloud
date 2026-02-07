@@ -7,12 +7,16 @@ import google.auth
 
 class Settings(BaseSettings):
     PROJECT_ID: str = ""
-    ALPACA_API_KEY: str = ""
-    ALPACA_SECRET_KEY: str = ""
-    SLACK_BOT_TOKEN: str = ""
-    SLACK_SIGNING_SECRET: str = ""
-    VERTEX_LOCATION: str = "asia-southeast1"
-    VERTEX_MODEL: str = "gemini-3-flash-preview"
+    _secrets: dict = {}
+    
+    # Internal secret IDs
+    _SECRET_IDS = [
+        "ALPACA_API_KEY",
+        "ALPACA_SECRET_KEY",
+        "SLACK_BOT_TOKEN",
+        "SLACK_SIGNING_SECRET",
+        "FRED_API_KEY"
+    ]
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -24,34 +28,53 @@ class Settings(BaseSettings):
             except Exception:
                 self.PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "default-project")
 
-    def load_secrets(self):
-        """Loads secrets from Google Secret Manager."""
-        # In production, we ALWAYS load from Secret Manager
+    def _get_secret_manager_value(self, secret_id: str) -> str:
+        """Helper to fetch a single secret from Google Secret Manager."""
         try:
             client = secretmanager.SecretManagerServiceClient()
-            
-            def get_secret(secret_id):
-                name = f"projects/{self.PROJECT_ID}/secrets/{secret_id}/versions/latest"
-                response = client.access_secret_version(request={"name": name})
-                return response.payload.data.decode("UTF-8")
-
-            self.ALPACA_API_KEY = get_secret("ALPACA_API_KEY")
-            self.ALPACA_SECRET_KEY = get_secret("ALPACA_SECRET_KEY")
-            self.SLACK_BOT_TOKEN = get_secret("SLACK_BOT_TOKEN")
-            self.SLACK_SIGNING_SECRET = get_secret("SLACK_SIGNING_SECRET")
-            print("✓ Successfully loaded production secrets from Secret Manager")
+            name = f"projects/{self.PROJECT_ID}/secrets/{secret_id}/versions/latest"
+            response = client.access_secret_version(request={"name": name})
+            return response.payload.data.decode("UTF-8")
         except Exception as e:
-            print(f"❌ Critical Error loading secrets from Secret Manager: {e}")
-            # For cloud deployment, this is fatal
-            if os.getenv("K_SERVICE"):
-                sys.exit(1)
-            else:
-                # Fallback to env vars for development/testing if not in Cloud Run
-                self.ALPACA_API_KEY = os.getenv("ALPACA_API_KEY", "")
-                self.ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY", "")
-                self.SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "")
-                self.SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET", "")
-                print("⚠️ Falling back to environment variables for secrets")
+            print(f"❌ Error loading secret {secret_id} from Secret Manager: {e}")
+            return os.getenv(secret_id, "")
+
+    @property
+    def ALPACA_API_KEY(self) -> str:
+        if "ALPACA_API_KEY" not in self._secrets:
+            self._secrets["ALPACA_API_KEY"] = self._get_secret_manager_value("ALPACA_API_KEY")
+        return self._secrets["ALPACA_API_KEY"]
+
+    @property
+    def ALPACA_SECRET_KEY(self) -> str:
+        if "ALPACA_SECRET_KEY" not in self._secrets:
+            self._secrets["ALPACA_SECRET_KEY"] = self._get_secret_manager_value("ALPACA_SECRET_KEY")
+        return self._secrets["ALPACA_SECRET_KEY"]
+
+    @property
+    def SLACK_BOT_TOKEN(self) -> str:
+        if "SLACK_BOT_TOKEN" not in self._secrets:
+            self._secrets["SLACK_BOT_TOKEN"] = self._get_secret_manager_value("SLACK_BOT_TOKEN")
+        return self._secrets["SLACK_BOT_TOKEN"]
+
+    @property
+    def SLACK_SIGNING_SECRET(self) -> str:
+        if "SLACK_SIGNING_SECRET" not in self._secrets:
+            self._secrets["SLACK_SIGNING_SECRET"] = self._get_secret_manager_value("SLACK_SIGNING_SECRET")
+        return self._secrets["SLACK_SIGNING_SECRET"]
+
+    @property
+    def FRED_API_KEY(self) -> str:
+        if "FRED_API_KEY" not in self._secrets:
+            self._secrets["FRED_API_KEY"] = self._get_secret_manager_value("FRED_API_KEY")
+        return self._secrets["FRED_API_KEY"]
+
+    @property
+    def VERTEX_LOCATION(self) -> str:
+        return "asia-southeast1"
+
+    @property
+    def VERTEX_MODEL(self) -> str:
+        return "gemini-3-flash-preview"
 
 settings = Settings()
-settings.load_secrets()

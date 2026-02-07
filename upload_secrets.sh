@@ -36,5 +36,6 @@ create_and_upload_secret "ALPACA_API_KEY" "$ALPACA_API_KEY"
 create_and_upload_secret "ALPACA_SECRET_KEY" "$ALPACA_SECRET_KEY"
 create_and_upload_secret "SLACK_BOT_TOKEN" "$SLACK_BOT_TOKEN"
 create_and_upload_secret "SLACK_SIGNING_SECRET" "$SLACK_SIGNING_SECRET"
+create_and_upload_secret "FRED_API_KEY" "$FRED_API_KEY"
 
 echo "✅ All secrets uploaded to Secret Manager!"

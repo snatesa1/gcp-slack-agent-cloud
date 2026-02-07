@@ -1,17 +1,22 @@
-from .researcher import ResearchAgent, TechnicalAnalyzer
-from .models import PredictionEnsemble
-from .alerter import Alerter
 from datetime import datetime
 from typing import Dict
 import os
 
 class StockOrchestrator:
     def __init__(self):
+        from .researcher import ResearchAgent, TechnicalAnalyzer
+        from .models import PredictionEnsemble
+        from .alerter import Alerter
+        
+        self.ResearchAgent = ResearchAgent
+        self.TechnicalAnalyzer = TechnicalAnalyzer
+        
         self.research_agent = ResearchAgent()
         self.ensemble = PredictionEnsemble()
         self.alerter = Alerter()
 
     async def run_analysis(self, symbol: str, forecast_days: int = 30):
+        from .config import settings
         # 1. Gather Research (Technicals, Momentum & Fundamentals)
         research = await self.research_agent.gather_full_research(symbol)
         
@@ -61,8 +66,8 @@ class StockOrchestrator:
         candles_status = "❌ No data"
         try:
             if df is not None and not df.empty:
-                fred_key = os.getenv('FRED_API_KEY')
-                monthly_candles = TechnicalAnalyzer.calculate_weighted_candles(
+                fred_key = settings.FRED_API_KEY
+                monthly_candles = self.TechnicalAnalyzer.calculate_weighted_candles(
                     df, 
                     lookback=12, 
                     recency_decay=0.95,
