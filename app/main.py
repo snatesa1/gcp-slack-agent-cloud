@@ -8,21 +8,31 @@ from .orchestrator import StockOrchestrator
 from .alerter import Alerter
 
 app = FastAPI(title="GCP Production Stock Agent")
-orchestrator = StockOrchestrator()
-alerter = Alerter()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+_orchestrator = None
+_alerter = None
+
+
 
 @app.get("/health")
 async def health():
     return {"status": "ok", "environment": "production" if os.getenv("K_SERVICE") else "development"}
+  
 
 async def run_analysis_task(text: str, response_url: str):
     """
     Background task that handles parsing, analysis, and Slack delivery.
     """
     symbol = "UNKNOWN"
+    global _orchestrator
+    global _alerter
+    if _orchestrator is None:
+        _orchestrator = StockOrchestrator()
+    if _alerter is None:
+        _alerter = Alerter()
+    
     try:
         # 1. Parse Input
         clean_text = text.strip() if text else ""
@@ -41,15 +51,15 @@ async def run_analysis_task(text: str, response_url: str):
             days = 30
 
         if not symbol or symbol == "UNKNOWN":
-            requests.post(response_url, json={"text": "❌ Usage: `/analyze TICKER|DAYS`"}, timeout=10)
+            requests.post(response_url, json={"text": "❌ Usage: `/analyze TICKER|DAYS`"}, timeout=3)
             return
 
         logger.info(f"🚀 Background task started for {symbol}")
-        
+
         # 2. Run the heavy analysis
         # The orchestrator now has its own fallbacks, so this should rarely throw
-        result = await orchestrator.run_analysis(symbol, days)
-        message = orchestrator.format_slack_message(result)
+        result = await _orchestrator.run_analysis(symbol, days)
+        message = _orchestrator.format_slack_message(result)
         
         # 3. Deliver final result
         resp = requests.post(response_url, json={
